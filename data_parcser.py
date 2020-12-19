@@ -1,0 +1,192 @@
+import numpy as np
+import networkx as nx
+
+INFINITY = 1e8
+
+class DispatchError(Exception):
+    # 标记分配出错，给当前正忙的服务员分配了任务
+    pass
+
+class Server:
+
+    def __init__(self, category, index, skills: dict):
+        '''
+            index: 序号
+            category: 服务台类型
+            is_available: 是否空闲
+            finish_time: 当前任务完成时间，当前空闲的话为-1
+            skills: 可以服务的顾客类型
+        '''
+        self.index = index
+        self.category = category
+        self.is_available = True
+        self.finish_time = -1
+        self.skills = skills
+
+    def receive_order(self, c_time, order_type):
+        '''
+            input: c_time: 接受order的时刻
+                   order_type: 接受的order类型
+            output: NoReturn
+        '''
+        if not self.is_available:
+            raise DispatchError('server %s is busy' %self.index)
+        self.is_available = False
+        service_time = np.random.exponential(1 / self.skills.get(order_type))
+        self.finish_time = c_time + service_time
+
+    def finish_order(self):
+        '''
+            函数功能：结束任务，将该服务员状态进行更新
+        '''
+        self.is_available = True
+        self.finish_time = -1
+
+class ServiceTable:
+
+    def __init__(self, category, servers: list):
+        '''
+            category: 服务台类型
+            servers: 该服务台的服务员列表
+            is_available: 该服务台是否有空余服务员
+            n_servers: 该服务台的服务员人数
+        '''
+        self.category = category
+        self.servers = servers
+        self.is_available = True
+        self.n_servers = len(servers)
+
+    def update_state(self):
+        '''
+            函数功能：更新服务台状态
+        '''
+        if self.n_servers == 0:
+            self.is_available = False
+        else:
+            self.is_available = True
+
+
+class Customer:
+    '''
+        顾客类
+        category: 类别
+        arrival_time: 到达时间
+        patient_time: 耐心程度
+
+    '''
+    def __init__(self, category, arrival_time, patient_time):
+        self.category = category
+        self.arrival_time = arrival_time
+        self.patient_time = patient_time
+
+# class CustomerStream:
+#     '''
+#         顾客流
+
+#     '''
+#     def __init__(self, strcut: dict):
+
+
+
+class CustomerQueue:
+    '''
+        队列类，用以记录不能被及时服务的顾客情况，根据到达时间排列
+        length: 队列长度
+        elements: 队列中具体顾客，numpy类型 
+        capacity: 队列最大容量
+    '''
+    def __init__(self):
+        self.length = 0
+        self.elements = np.array([])
+        self.capacity = INFINITY
+
+class CallCenterStrcut:
+    '''
+        呼叫中心结构
+        G: 具体结构，无向Graph
+        build_Xdesign: 创建X型呼叫中心, s1可以服务c1, c2, s2可以服务c1, c1
+        build_Ndesign: 创建N型呼叫中心, s1只可服务c1, s2可以服务c1, c2
+        build_Wdesign: 创建W型呼叫中心, s1可以服务c1, c2, s2可以服务c2, c3
+        build_general_design: 创建一般呼叫中心
+        clear: 清除图结构
+        describe: 打印图中节点和边信息
+    '''
+    def __init__(self):
+        self.G = nx.Graph()
+        self.design_name = ''
+        self.contract_types_num = 0
+        self.agent_groups_num = 0
+
+    def build_Xdesign(self, Xdesign_data: dict):
+        '''
+            Xdesign_data为dict类型{'servers_table': servers_table,
+                                  'arrival_rates': arrival_rates,
+                                  'service_rates': service_rates,
+                                  'patience': patience}
+            可参见dataprep.py中read_data函数
+            distribution: list type, distribution function of arrival_rate, service_rate, patience_rate
+            后面Ndesign，Wdesign类似
+        '''
+        self.design_name = 'X'
+        self.contract_types_num = 2
+        self.agent_groups_num = 2
+        self.distribution = ['poisson', 'exponential', 'exponential']
+        self.G.add_node('s1', capacity=Xdesign_data['servers_table'][0])
+        self.G.add_node('s2', capacity=Xdesign_data['servers_table'][1])
+        self.G.add_node('c1', lmbda=Xdesign_data['arrival_rates']['args'][0], nu=Xdesign_data['patience']['args'][0])
+        self.G.add_node('c2', lmbda=Xdesign_data['arrival_rates']['args'][1], nu=Xdesign_data['patience']['args'][1])
+        self.G.add_edge('s1', 'c1', mu=Xdesign_data['service_rates']['args'][0][0])
+        self.G.add_edge('s1', 'c2', mu=Xdesign_data['service_rates']['args'][0][1])
+        self.G.add_edge('s2', 'c1', mu=Xdesign_data['service_rates']['args'][1][0])
+        self.G.add_edge('s2', 'c2', mu=Xdesign_data['service_rates']['args'][1][1])
+
+    def build_Ndesign(self, Ndesign_data):
+        self.design_name = 'N'
+        self.contract_types_num = 2
+        self.agent_groups_num = 2
+        self.distribution = ['poisson', 'exponential', 'exponential']
+        self.G.add_node('s1', capacity=Ndesign_data['servers_table'][0])
+        self.G.add_node('s2', capacity=Ndesign_data['servers_table'][1])
+        self.G.add_node('c1', lmbda=Ndesign_data['arrival_rates']['args'][0], nu=Ndesign_data['patience']['args'][0])
+        self.G.add_node('c2', lmbda=Ndesign_data['arrival_rates']['args'][1], nu=Ndesign_data['patience']['args'][1])
+        self.G.add_edge('s1', 'c1', mu=Ndesign_data['service_rates']['args'][0][0])
+        self.G.add_edge('s2', 'c1', mu=Ndesign_data['service_rates']['args'][1][0])
+        self.G.add_edge('s2', 'c2', mu=Ndesign_data['service_rates']['args'][1][1])
+
+    def build_Wdesign(self, Wdesign_data):
+        self.design_name = 'W'
+        self.contract_types_num = 3
+        self.agent_groups_num = 2
+        self.distribution = ['poisson', 'exponential', 'exponential']
+        self.G.add_node('s1', capacity=Wdesign_data['servers_table'][0])
+        self.G.add_node('s2', capacity=Wdesign_data['servers_table'][1])
+        self.G.add_node('c1', lmbda=Wdesign_data['arrival_rates']['args'][0], nu=Wdesign_data['patience']['args'][0])
+        self.G.add_node('c2', lmbda=Wdesign_data['arrival_rates']['args'][1], nu=Wdesign_data['patience']['args'][1])
+        self.G.add_node('c3', lmbda=Wdesign_data['arrival_rates']['args'][2], nu=Wdesign_data['patience']['args'][2])
+        self.G.add_edge('s1', 'c1', mu=Wdesign_data['service_rates']['args'][0][0])
+        self.G.add_edge('s1', 'c2', mu=Wdesign_data['service_rates']['args'][0][1])
+        self.G.add_edge('s2', 'c2', mu=Wdesign_data['service_rates']['args'][1][1])
+        self.G.add_edge('s2', 'c3', mu=Wdesign_data['service_rates']['args'][1][2])
+
+    def build_general_design(self, general_design_data):
+        self.design_name = 'G'
+        self.distribution = ['poisson', 'exponential', 'exponential']
+        self.contract_types_num = len(general_design_data['servers_table'])
+        self.agent_groups_num = len(general_design_data['arrival_rates']['args'])
+        for i in range(self.contract_types_num):
+            self.G.add_node('s%s' %(i + 1), capacity=general_design_data['servers_table'][i])
+        for i in range(self.agent_groups_num):
+            self.G.add_node('c%s' %(i + 1), lmbda=general_design_data['arrival_rates']['args'][i],
+                            nu=general_design_data['patience']['args'][i])
+        for i in range(len(general_design_data['service_rates']['args'])):
+            for j in range(len(general_design_data['service_rates']['args'][0])):
+                if general_design_data['service_rates']['args'][i][j] > 0:
+                    self.G.add_edge('s%s' %(i + 1), 'c%s' %(j + 1), mu=general_design_data['service_rates']['args'][i][j])
+
+    def clear(self):
+        self.G.clear()
+
+    def describe(self):
+        print('Nodes: ', self.G.nodes(data=True))
+        print('Edges: ', self.G.edges(data=True))
+

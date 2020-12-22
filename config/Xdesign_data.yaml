@@ -4,8 +4,8 @@ s:
 c:
    d: poisson
    args:
-      - 18
-      - 1.8
+      - 0.055555556
+      - 0.55555556
 mu:
    d: exponential
    args:

@@ -9,21 +9,21 @@ class DispatchError(Exception):
 
 class Server:
 
-    def __init__(self, category, index, skills: dict):
+    def __init__(self, name, index):
         '''
             index: 序号
-            category: 服务台类型
+            name: 服务台类型
             is_available: 是否空闲
             finish_time: 当前任务完成时间，当前空闲的话为-1
-            skills: 可以服务的顾客类型
         '''
         self.index = index
-        self.category = category
+        self.name = name
         self.is_available = True
+        self.ongoing_call = None
         self.finish_time = -1
-        self.skills = skills
+        self.last_finish_time = -1
 
-    def receive_order(self, c_time, order_type):
+    def receive_order(self, c_time, order_type, service_time):
         '''
             input: c_time: 接受order的时刻
                    order_type: 接受的order类型
@@ -31,8 +31,8 @@ class Server:
         '''
         if not self.is_available:
             raise DispatchError('server %s is busy' %self.index)
+        self.ongoing_call = order_type
         self.is_available = False
-        service_time = np.random.exponential(1 / self.skills.get(order_type))
         self.finish_time = c_time + service_time
 
     def finish_order(self):
@@ -40,21 +40,23 @@ class Server:
             函数功能：结束任务，将该服务员状态进行更新
         '''
         self.is_available = True
+        self.last_finish_time = self.finish_time
         self.finish_time = -1
 
 class ServiceTable:
 
-    def __init__(self, category, servers: list):
+    def __init__(self, name, servers: list):
         '''
             category: 服务台类型
             servers: 该服务台的服务员列表
             is_available: 该服务台是否有空余服务员
             n_servers: 该服务台的服务员人数
         '''
-        self.category = category
+        self.name = name
         self.servers = servers
         self.is_available = True
         self.n_servers = len(servers)
+        self.last_finish_time = -1
 
     def update_state(self):
         '''
@@ -65,6 +67,10 @@ class ServiceTable:
         else:
             self.is_available = True
 
+    def get_idlest_server_index(self):
+        self.last_finish_time = min([S.last_finish_time for S in self.servers])
+        index = [S.last_finish_time for S in self.servers].index(self.last_finish_time)
+        return index
 
 class Customer:
     '''
@@ -74,17 +80,16 @@ class Customer:
         patient_time: 耐心程度
 
     '''
-    def __init__(self, category, arrival_time, patient_time):
-        self.category = category
+    def __init__(self, name, arrival_time):
+        self.name = name
         self.arrival_time = arrival_time
-        self.patient_time = patient_time
+        self.patience_time = 0
+        self.waiting_time = 0
+        self.agent_group = None
+        self.queue_index = 0
 
-# class CustomerStream:
-#     '''
-#         顾客流
-
-#     '''
-#     def __init__(self, strcut: dict):
+    def wait(self):
+        self.waiting_time += 1
 
 
 
@@ -92,13 +97,16 @@ class CustomerQueue:
     '''
         队列类，用以记录不能被及时服务的顾客情况，根据到达时间排列
         length: 队列长度
-        elements: 队列中具体顾客，numpy类型 
+        elements: 队列中具体顾客，dict类型, 按顾客类型分类 
         capacity: 队列最大容量
     '''
     def __init__(self):
         self.length = 0
-        self.elements = np.array([])
+        self.elements = {}
         self.capacity = INFINITY
+    
+    def append(self, C):
+        self.elements[C.category].apend(C)
 
 class CallCenterStrcut:
     '''
@@ -130,7 +138,7 @@ class CallCenterStrcut:
         self.design_name = 'X'
         self.contract_types_num = 2
         self.agent_groups_num = 2
-        self.distribution = ['poisson', 'exponential', 'exponential']
+        self.distribution = Xdesign_data['distribution']
         self.G.add_node('s1', capacity=Xdesign_data['servers_table'][0])
         self.G.add_node('s2', capacity=Xdesign_data['servers_table'][1])
         self.G.add_node('c1', lmbda=Xdesign_data['arrival_rates']['args'][0], nu=Xdesign_data['patience']['args'][0])
@@ -144,7 +152,7 @@ class CallCenterStrcut:
         self.design_name = 'N'
         self.contract_types_num = 2
         self.agent_groups_num = 2
-        self.distribution = ['poisson', 'exponential', 'exponential']
+        self.distribution = Ndesign_data['distribution']
         self.G.add_node('s1', capacity=Ndesign_data['servers_table'][0])
         self.G.add_node('s2', capacity=Ndesign_data['servers_table'][1])
         self.G.add_node('c1', lmbda=Ndesign_data['arrival_rates']['args'][0], nu=Ndesign_data['patience']['args'][0])
@@ -157,7 +165,7 @@ class CallCenterStrcut:
         self.design_name = 'W'
         self.contract_types_num = 3
         self.agent_groups_num = 2
-        self.distribution = ['poisson', 'exponential', 'exponential']
+        self.distribution = Wdesign_data['distribution']
         self.G.add_node('s1', capacity=Wdesign_data['servers_table'][0])
         self.G.add_node('s2', capacity=Wdesign_data['servers_table'][1])
         self.G.add_node('c1', lmbda=Wdesign_data['arrival_rates']['args'][0], nu=Wdesign_data['patience']['args'][0])
@@ -170,7 +178,7 @@ class CallCenterStrcut:
 
     def build_general_design(self, general_design_data):
         self.design_name = 'G'
-        self.distribution = ['poisson', 'exponential', 'exponential']
+        self.distribution = general_design_data['distribution']
         self.contract_types_num = len(general_design_data['servers_table'])
         self.agent_groups_num = len(general_design_data['arrival_rates']['args'])
         for i in range(self.contract_types_num):

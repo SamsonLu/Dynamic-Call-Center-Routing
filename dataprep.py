@@ -19,11 +19,13 @@ def read_data(design_name):
     with open(yaml_path, 'r') as f:
         loader = f.read()
         data = yaml.load(loader)
+        distribution = {'arrival': data['c']['d'], 'service': data['mu']['d'], 'patience': data['v']['d']}
         servers_table = data['s']
         arrival_rates = data['c']
         service_rates = data['mu']
         patience = data['v']
-    struct_data = {'servers_table': servers_table, 'arrival_rates': arrival_rates, 'service_rates': service_rates, 'patience': patience}
+    struct_data = {'distribution': distribution, 'servers_table': servers_table,
+                   'arrival_rates': arrival_rates, 'service_rates': service_rates, 'patience': patience}
     return struct_data
 
 

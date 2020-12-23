@@ -134,10 +134,11 @@ class QueueSystem:
         return choices[0]
 
     def choose_server(self, C):
-        choices = list(self.structure.G[C.name])
-        for i, v in enumerate(choices):
-            if not self.agent_groups[v].is_available:
-                choices.pop(i)
+        choices_ = list(self.structure.G[C.name])
+        choices = []
+        for v in choices_:
+            if self.agent_groups[v].is_available:
+                choices.append(v)
         if len(choices) == 0:
             return -1
         if len(choices) == 1:

@@ -67,6 +67,7 @@ class ServiceTable:
         '''
         if self.busy_agent_num == self.n_servers:
             self.is_available = False
+            self.last_finish_time = min([S.last_finish_time for S in self.servers])
         else:
             self.is_available = True
 

@@ -30,10 +30,11 @@ class Server:
             output: NoReturn
         '''
         if not self.is_available:
-            raise DispatchError('server %s is busy' %self.index)
+            raise DispatchError('server %s is busy' %self.name)
         self.ongoing_call = order_type
         self.is_available = False
         self.finish_time = c_time + service_time
+        self.last_finish_time = INFINITY
 
     def finish_order(self):
         '''
@@ -41,6 +42,7 @@ class Server:
         '''
         self.is_available = True
         self.last_finish_time = self.finish_time
+        self.ongoing_call = None
         self.finish_time = -1
 
 class ServiceTable:
@@ -57,15 +59,24 @@ class ServiceTable:
         self.is_available = True
         self.n_servers = len(servers)
         self.last_finish_time = -1
+        self.busy_agent_num = 0
 
     def update_state(self):
         '''
             函数功能：更新服务台状态
         '''
-        if self.n_servers == 0:
+        if self.busy_agent_num == self.n_servers:
             self.is_available = False
         else:
             self.is_available = True
+
+    def add_busy_agent(self):
+        self.busy_agent_num += 1
+        self.update_state()
+
+    def sub_busy_agent(self):
+        self.busy_agent_num -= 1
+        self.update_state()
 
     def get_idlest_server_index(self):
         self.last_finish_time = min([S.last_finish_time for S in self.servers])
@@ -91,22 +102,6 @@ class Customer:
     def wait(self):
         self.waiting_time += 1
 
-
-
-class CustomerQueue:
-    '''
-        队列类，用以记录不能被及时服务的顾客情况，根据到达时间排列
-        length: 队列长度
-        elements: 队列中具体顾客，dict类型, 按顾客类型分类 
-        capacity: 队列最大容量
-    '''
-    def __init__(self):
-        self.length = 0
-        self.elements = {}
-        self.capacity = INFINITY
-    
-    def append(self, C):
-        self.elements[C.category].apend(C)
 
 class CallCenterStrcut:
     '''

@@ -2,6 +2,7 @@ import numpy as np
 from abc import abstractmethod
 import networkx as nx
 from tqdm import tqdm
+from matplotlib import pyplot as plt
 
 from data_parcser import Server, ServiceTable, Customer
 from eval import F_s
@@ -92,8 +93,8 @@ class QueueSystem:
     def generate_calls_flow(self, call_flow_size):
         ''' generate call flow and convert it to second format'''
         for c in self.customer_nodes:
-            intervals = self.arrival_generator(self.structure.G.nodes[c]['lmbda'], (call_flow_size, ))
-            arrival_time = intervals.cumsum() * 60
+            intervals = self.arrival_generator(1 / self.structure.G.nodes[c]['lmbda'], (call_flow_size, ))
+            arrival_time = np.round(intervals.cumsum() * 60)
             self.calls_flow[c] = arrival_time.astype(int).tolist()
 
     def check_arrival_event(self):
@@ -147,10 +148,15 @@ class QueueSystem:
             return self.choose_server_byG(C, choices)
     
     def choose_customer_byG(self, S, choices):
+        choices_ = []
         for c, lst in self.queue.items():
             if c in choices and len(lst) > 0:
-                return c
-        return -1
+                choices_.append((c, lst[0].arrival_time))
+        if len(choices_) == 0:
+            return -1
+        else:
+            choices_.sort(key=lambda x: x[1])
+            return choices_[0][0]
 
     def choose_customer(self, S):
         choices = list(self.structure.G[S.name])
@@ -176,7 +182,7 @@ class QueueSystem:
     def assign_customer_to_server(self, C, s):
         '''s is the agent group name'''
         # print('call %s is assigned to agent group %s' %(C.name, s))
-        service_time = int(self.service_generator(self.structure.G[s][C.name]['mu']) * 60)
+        service_time = round(self.service_generator(1 / self.structure.G[s][C.name]['mu']) * 60)
         index = self.agent_groups[s].get_idlest_server_index()
         self.agent_groups[s].servers[index].receive_order(self.t, C.name, service_time)
         self.insert_into_service_flow(self.agent_groups[s].servers[index])
@@ -184,24 +190,19 @@ class QueueSystem:
 
     def put_into_queue(self, C):
         c = C.name
-        patience_time = int(self.patience_generator(self.structure.G.nodes[c]['nu']) * 60)
+        patience_time = round(self.patience_generator(1 / self.structure.G.nodes[c]['nu']) * 60)
         C.patience_time = self.t + patience_time
         self.queue[c].append(C) # don't consider queue capacity
         self.insert_into_patience_flow(C)
-    
-    def wait(self):
-        for c in self.queue:
-            for C in self.queue[c]:
-                C.wait()
 
     def counter_update(self):
         for c in self.customer_nodes:
             if self.served_num[c] + self.abandoned_afterAWT_num[c] == 0:
-                self.SL[c].append(0)
+                self.SL[c].append(1)
             else:
                 self.SL[c].append(self.goodSL_num[c] / (self.served_num[c] + self.abandoned_afterAWT_num[c]))
             if self.served_num[c] + self.abandoned_num[c] == 0:
-                self.abandon_ratio[c].append(0)
+                self.abandon_ratio[c].append(1)
             else:
                 self.abandon_ratio[c].append(self.abandoned_num[c] / (self.served_num[c] + self.abandoned_num[c]))
         for s in self.agent_nodes:
@@ -231,6 +232,7 @@ class QueueSystem:
                 else:
                     self.assign_customer_to_server(C, s)
                     self.goodSL_num[C.name] += 1
+                    self.served_num[C.name] += 1
             elif event[0] == 'service':
                 S= event[1]
                 self.agent_groups[S.name].sub_busy_agent()
@@ -238,7 +240,8 @@ class QueueSystem:
                 if c != -1:
                     C = self.queue[c][0]
                     self.served_num[c] += 1
-                    if C.waiting_time <= self.AWT:
+                    waiting_time = self.t - C.arrival_time
+                    if waiting_time <= self.AWT:
                         self.goodSL_num[c] += 1    
                     self.assign_customer_to_server(C, S.name)
                     self.queue[c].pop(0)
@@ -247,7 +250,8 @@ class QueueSystem:
             elif event[0] == 'abandon':
                 C= event[1]
                 self.abandoned_num[C.name] += 1
-                if C.waiting_time > self.AWT:
+                waiting_time = self.t - C.arrival_time
+                if waiting_time > self.AWT:
                     self.abandoned_afterAWT_num[C.name] += 1
                 self.queue[C.name].remove(C)
 
@@ -259,5 +263,12 @@ class QueueSystem:
             self.t += 1
         PE = self.performance_evaluation()
         print('Performance evaluation: ', PE)
-
+        fig, ax = plt.subplots()
+        for c in self.customer_nodes:
+            ax.plot(self.SL[c], label=c)
+        ax.set_xlabel('time')
+        ax.set_ylabel('service level')
+        ax.set_title('performance evaluation')
+        ax.legend()
+        plt.show()
           

@@ -6,7 +6,7 @@ def run():
     struct_data= read_data(design_name)
     CCS = CallCenterStrcut()
     CCS.build_Xdesign(struct_data)
-    test_queue = QueueSystem(360000, INF, CCS, 'G', 20, 0.8)
+    test_queue = QueueSystem(360000, INF, CCS, 'G', 200, 80)
     test_queue.run()
 if __name__ == "__main__":
     run()     

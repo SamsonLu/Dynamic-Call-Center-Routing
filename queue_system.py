@@ -3,6 +3,9 @@ from abc import abstractmethod
 import networkx as nx
 from tqdm import tqdm
 from matplotlib import pyplot as plt
+import math
+import time
+import json
 
 from data_parcser import Server, ServiceTable, Customer
 from eval import F_s
@@ -20,22 +23,28 @@ class QueueSystem:
          - SL_threshold: service level threshold, float
     '''
 
-    def __init__(self, simulation_time, queue_capacity, call_center_structure, router, AWT, SL_threshold):
+    def __init__(self, simulation_time, queue_capacity, call_center_structure,
+                 router, batch_size, warmup_steps, AWT, SL_threshold, seed):
         self.T = simulation_time
         self.t = 0
         self.queue_capacity = queue_capacity
         self.structure = call_center_structure
         self.router = router
+        self.batch_size = batch_size
+        self.warmup_steps = warmup_steps
         self.AWT = AWT
         self.SL_threshold = SL_threshold
         self.K = call_center_structure.contract_types_num # number of contract types
         self.I = call_center_structure.agent_groups_num # number of agent groups
         self.agent_nodes = list(call_center_structure.G.nodes())[:self.K] # first K nodes are agent nodes
         self.customer_nodes = list(call_center_structure.G.nodes())[self.K:] # remain nodes are customer nodes
-        self.calls_flow = {} # record the arrival time of each call
+        self.calls_flow = {c: [] for c in self.customer_nodes} # record the arrival time of each call
         self.service_flow = [] # record the call sorted by service finish time
         self.patience_flow = [] # record the call sorted by patience time 
         self.queue = {c: [] for c in self.customer_nodes}
+        self.arrival_data = {}
+        self.pointer = {c: 0 for c in self.customer_nodes}
+        self.seed = seed
         '''
             Counters:
                 goodSL_num: number of served calls that have waited no more than AWT
@@ -90,42 +99,62 @@ class QueueSystem:
         self.abandon_ratio.clear()
         self.occupancy_ratio.clear()
 
-    def generate_calls_flow(self, call_flow_size):
-        ''' generate call flow and convert it to second format'''
+    def generate_arrival_data(self, read=None, save=False):
+        if read is not None:
+            with open(read, 'r') as f:
+                self.arrival_data = json.load(f)
         for c in self.customer_nodes:
-            intervals = self.arrival_generator(1 / self.structure.G.nodes[c]['lmbda'], (call_flow_size, ))
+            data_size = round(self.T * self.structure.G.nodes[c]['lmbda'] / 60 * 2)
+            intervals = self.arrival_generator(1 / self.structure.G.nodes[c]['lmbda'], (data_size, ))
             arrival_time = np.round(intervals.cumsum() * 60)
-            self.calls_flow[c] = arrival_time.astype(int).tolist()
+            self.arrival_data[c] = arrival_time.astype(int).tolist()
+        if save:
+            now = time.strftime('%Y%m%d%H%M', time.localtime(time.time()))
+            file_name = 'data' + now + '.json'
+            with open('data//' + file_name, 'w') as f:
+                json.dump(self.arrival_data, f)
+
+    def generate_calls_flow(self, call_type):
+        ''' generate call flow and convert it to second format'''
+        start, end = self.pointer[call_type], self.pointer[call_type] + self.batch_size
+        self.calls_flow[call_type] = self.arrival_data[call_type][start: end]
+        self.pointer[call_type] += self.batch_size
+
+    def check_call_flow(self):
+        for c in self.calls_flow:
+            if len(self.calls_flow[c]) == 0:
+                self.generate_calls_flow(call_type=c)
 
     def check_arrival_event(self):
         for c in self.calls_flow:
             index = 0
-            for i, arrival_time in enumerate(self.calls_flow[c]):
+            for arrival_time in self.calls_flow[c]:
                 if arrival_time <= self.t:
                     self.current_event.append(('arrival', c, arrival_time))
+                    index += 1
                 else:
-                    index = i
                     break
             self.calls_flow[c] = self.calls_flow[c][index :]
 
     def check_service_event(self):
         index = 0
-        for i, S in enumerate(self.service_flow):
+        for S in self.service_flow:
             if S.finish_time <= self.t:
                 self.agent_groups[S.name].servers[S.index].finish_order()
                 self.current_event.append(('service', S))
+                index += 1
             else:
-                index = i
                 break
         self.service_flow = self.service_flow[index :]
 
     def check_abandon_event(self):
         index = 0
-        for i, C in enumerate(self.patience_flow):
-            if C.patience_time <= self.t:
-                self.current_event.append(('patience', C))
+        for C in self.patience_flow:
+            if C.patience_time < self.t:
+                self.current_event.append(('abandon', C))
+                # print('customer %s is abandoned')
+                index += 1
             else:
-                index = i
                 break
         self.patience_flow = self.patience_flow[index :]
 
@@ -202,7 +231,7 @@ class QueueSystem:
             else:
                 self.SL[c].append(self.goodSL_num[c] / (self.served_num[c] + self.abandoned_afterAWT_num[c]))
             if self.served_num[c] + self.abandoned_num[c] == 0:
-                self.abandon_ratio[c].append(1)
+                self.abandon_ratio[c].append(0)
             else:
                 self.abandon_ratio[c].append(self.abandoned_num[c] / (self.served_num[c] + self.abandoned_num[c]))
         for s in self.agent_nodes:
@@ -215,14 +244,22 @@ class QueueSystem:
         SL = {c: self.SL[c][-1] for c in self.customer_nodes}
         AR = {c: self.abandon_ratio[c][-1] for c in self.customer_nodes}
         OR = {s: self.occupancy_ratio[s] for s in self.agent_nodes}
+        print('SL: ', SL)
+        print('AR: ', AR)
+        print('OR: ', OR)
         PE = F_s(SL, self.SL_threshold)
         return PE
 
-    def step(self):
+    def step(self, warmup=False):
+        try:
+            assert sum([len(self.queue[c]) for c in self.customer_nodes]) == len(self.patience_flow)
+        except:
+            print('Queue Error!')
+        self.check_call_flow()
         self.current_event.clear()
         self.check_arrival_event()
-        self.check_service_event()
         self.check_abandon_event()
+        self.check_service_event()
         for event in self.current_event:
             if event[0] == 'arrival':
                 C = Customer(event[1], event[2])
@@ -231,39 +268,52 @@ class QueueSystem:
                     self.put_into_queue(C)
                 else:
                     self.assign_customer_to_server(C, s)
-                    self.goodSL_num[C.name] += 1
-                    self.served_num[C.name] += 1
+                    if not warmup:
+                        self.goodSL_num[C.name] += 1
+                        self.served_num[C.name] += 1
+            elif event[0] == 'abandon':
+                C = event[1]
+                if not warmup:
+                    self.abandoned_num[C.name] += 1
+                waiting_time = self.t - C.arrival_time
+                if waiting_time > self.AWT:
+                    if not warmup:
+                        self.abandoned_afterAWT_num[C.name] += 1
+                self.queue[C.name].remove(C)
             elif event[0] == 'service':
                 S= event[1]
                 self.agent_groups[S.name].sub_busy_agent()
                 c = self.choose_customer(S)
                 if c != -1:
                     C = self.queue[c][0]
-                    self.served_num[c] += 1
+                    if not warmup:
+                        self.served_num[c] += 1
                     waiting_time = self.t - C.arrival_time
-                    if waiting_time <= self.AWT:
+                    if waiting_time <= self.AWT and not warmup:
                         self.goodSL_num[c] += 1    
                     self.assign_customer_to_server(C, S.name)
+                    try:
+                        assert C in self.patience_flow
+                    except:
+                        print('Queue Error!')
+                    self.patience_flow.remove(C)
                     self.queue[c].pop(0)
                 else:
                     self.agent_groups[S.name].servers[S.index].finish_order()
-            elif event[0] == 'abandon':
-                C= event[1]
-                self.abandoned_num[C.name] += 1
-                waiting_time = self.t - C.arrival_time
-                if waiting_time > self.AWT:
-                    self.abandoned_afterAWT_num[C.name] += 1
-                self.queue[C.name].remove(C)
 
     def run(self):
-        self.generate_calls_flow(100000)
+        np.random.seed(self.seed)
+        self.generate_arrival_data(read=r'data/data202012251909.json')
+        for _ in range(self.warmup_steps):
+            self.step(warmup=True)
+            self.t += 1
         for _ in tqdm(range(self.T)):
             self.step()
             self.counter_update()
             self.t += 1
         PE = self.performance_evaluation()
         print('Performance evaluation: ', PE)
-        fig, ax = plt.subplots()
+        _, ax = plt.subplots()
         for c in self.customer_nodes:
             ax.plot(self.SL[c], label=c)
         ax.set_xlabel('time')

@@ -96,12 +96,6 @@ class Customer:
         self.name = name
         self.arrival_time = arrival_time
         self.patience_time = 0
-        self.waiting_time = 0
-        self.agent_group = None
-        self.queue_index = 0
-
-    def wait(self):
-        self.waiting_time += 1
 
 
 class CallCenterStrcut:
